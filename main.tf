@@ -69,11 +69,6 @@ resource "aws_security_group" "alb_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-
--
-
-
-
 # IAM Role for EKS Cluster
 resource "aws_iam_role" "eks_role" {
   name = "eksClusterRole"
