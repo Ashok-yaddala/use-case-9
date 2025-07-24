@@ -19,6 +19,8 @@ resource "aws_subnet" "public" {
  map_public_ip_on_launch = true
  tags = {
    Name = "${var.environment}-public-subnet-${count.index}"
+     "kubernetes.io/role/elb" = "1"
+    "kubernetes.io/cluster/${var.environment}-eks" = "shared"
  }
 }
 # Internet Gateway
@@ -137,4 +139,110 @@ resource "aws_eks_node_group" "node_group" {
  }
  instance_types = ["t3.medium"]
  depends_on = [aws_eks_cluster.eks]
+}
+
+# ---------------------------
+# ALB Controller IRSA Module
+# ---------------------------
+
+# Variables you need to define in root module:
+# - var.environment
+# - var.region
+
+provider "helm" {
+  kubernetes {
+    config_path = "~/.kube/config" # or use dynamic setup via data.aws_eks_cluster + aws eks update-kubeconfig
+  }
+}
+
+provider "kubernetes" {
+  config_path = "~/.kube/config"
+}
+
+# Get EKS cluster data
+data "aws_eks_cluster" "eks" {
+  name = var.eks_cluster_name
+}
+
+data "aws_iam_openid_connect_provider" "oidc" {
+  url = replace(data.aws_eks_cluster.eks.identity[0].oidc[0].issuer, "https://", "")
+}
+
+# IAM Role for ALB Controller
+resource "aws_iam_role" "alb_controller_irsa" {
+  name = "${var.environment}-alb-controller-irsa"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = {
+        Federated = data.aws_iam_openid_connect_provider.oidc.arn
+      },
+      Action = "sts:AssumeRoleWithWebIdentity",
+      Condition = {
+        StringEquals = {
+          "${replace(data.aws_eks_cluster.eks.identity[0].oidc[0].issuer, "https://", "")}:sub" = "system:serviceaccount:kube-system:aws-load-balancer-controller"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "alb_controller_policy" {
+  role       = aws_iam_role.alb_controller_irsa.name
+  policy_arn = "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess"
+}
+
+# Kubernetes service account
+resource "kubernetes_service_account" "alb_controller_sa" {
+  metadata {
+    name      = "aws-load-balancer-controller"
+    namespace = "kube-system"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.alb_controller_irsa.arn
+    }
+  }
+  depends_on = [aws_iam_role.alb_controller_irsa]
+}
+
+# Helm chart deployment
+resource "helm_release" "aws_load_balancer_controller" {
+  name       = "aws-load-balancer-controller"
+  namespace  = "kube-system"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  version    = "1.7.1"
+
+  set {
+    name  = "clusterName"
+    value = data.aws_eks_cluster.eks.name
+  }
+
+  set {
+    name  = "region"
+    value = var.region
+  }
+
+  set {
+    name  = "vpcId"
+    value = var.vpc_id
+  }
+
+  set {
+    name  = "serviceAccount.create"
+    value = "false"
+  }
+
+  set {
+    name  = "serviceAccount.name"
+    value = kubernetes_service_account.alb_controller_sa.metadata[0].name
+  }
+
+  set {
+    name  = "image.repository"
+    value = "602401143452.dkr.ecr.${var.region}.amazonaws.com/amazon/aws-load-balancer-controller"
+  }
+
+  depends_on = [kubernetes_service_account.alb_controller_sa]
 }

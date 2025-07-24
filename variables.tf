@@ -27,3 +27,13 @@ variable "azs" {
   type        = list(string)
   default     = ["ap-south-1a", "ap-south-1b"]
 }
+
+variable "vpc_id" {
+  description = "VPC ID for the ALB Controller"
+  type        = string
+}
+
+variable "eks_cluster_name" {
+  description = "Name of the EKS cluster"
+  type        = string
+}
