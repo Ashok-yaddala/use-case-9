@@ -1,0 +1,20 @@
+# Terraform working directory
+.terraform/
+
+# Terraform lock file
+.terraform.lock.hcl
+
+# Terraform state files (optional but recommended)
+*.tfstate
+*.tfstate.backup
+
+# Local override and variable files (optional)
+//*.tfvars
+*.tfvars.json
+*.override.tf
+*.override.tf.json
+
+# IDE and OS-specific
+.vscode/
+.idea/
+.DS_Store
